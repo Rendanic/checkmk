@@ -52,7 +52,7 @@ def inventory_oracle_instance(info):
         # Skip ORA- error messages from broken old oracle agent
         # <<<oracle_instance:sep(124)>>>
         # ORA-99999 tnsping failed for +ASM1
-        if not (line[0].startswith('ORA-') and line[0][4].isdigit() and len(line[0]) < 16):
+        if not (line[0].startswith('ORA-') and line[0][4].isdigit() and len(line[0]) < 17):
 
             # possible multitenant entry?
             if len(line) > 12:
@@ -110,6 +110,7 @@ def check_oracle_instance(item, params, info):
                 return 2, " ".join(line[2:])
 
             state = 0
+            scn = None
 
             # Be compatible to old oracle agent plugin output
             if len(line) == 6:
@@ -123,15 +124,23 @@ def check_oracle_instance(item, params, info):
                 sid, version, openmode, logins, archiver, up_seconds, _dbid, \
                     log_mode, database_role, force_logging, name = line
 
-            elif len(line) == 12:
+            elif len(line) in (12,14):
                 sid, version, openmode, logins, archiver, up_seconds, _dbid, \
-                    log_mode, database_role, force_logging, name, _dbcreated = line
+                    log_mode, database_role, force_logging, name, _dbcreated = line[:12]
 
-            elif len(line) == 22:
+                if len(line) >= 14:
+                    scn = int(line[12])
+                    orasysdate = line[13]
+
+            elif len(line) >= 22:
                 sid, version, openmode, logins, archiver, up_seconds, _dbid, \
                     log_mode, database_role, force_logging, name, _dbcreated, pluggable, \
                     _con_id, pname, _pdbid, popenmode, prestricted, ptotal_size, _precovery_status, \
-                    pup_seconds, _pblock_size = line
+                    pup_seconds, _pblock_size = line[:22]
+
+                if len(line) >= 24:
+                    scn = int(line[22])
+                    orasysdate = line[23]
 
             else:
                 return 2, "Database not running, login failed or unvalid data from agent"
@@ -225,6 +234,21 @@ def check_oracle_instance(item, params, info):
             if pdb is True:
                 infotext += ', PDB Size %s' % get_bytes_human_readable(int(ptotal_size))
                 perfdata.append(('fs_size', int(ptotal_size)))
+
+            # orasysdate is to_char(sysdate, 'yyyyddmmhh24miss')
+            if scn > 0 and int(orasysdate) > 0 and not pdb and openmode == 'OPEN':
+
+                # See Oracle Support Note 1376995.1 and Patch 13498243 for crazy calculation
+                # rslscn is maximum allowed scn for SCN scheme 1.
+                rslscn = (((int(orasysdate[0:4])-1988)*12*31*24*60*60) \
+                          + ((int(orasysdate[4:6])-1)*31*24*60*60) \
+                          + ((int(orasysdate[6:8])-1)*24*60*60) \
+                          + ((int(orasysdate[8:10]))*60*60) \
+                          + ((int(orasysdate[10:12]))*60) \
+                          + ((int(orasysdate[12:14]))))*16*1024
+                rslused = (float(scn) / rslscn) *100
+
+                infotext +=', SCN %s, %2.2f%% used SCN Headroom scheme 1' % (scn, rslused)
 
             return state, infotext, perfdata
 

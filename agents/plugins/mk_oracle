@@ -1438,6 +1438,8 @@ sql_instance () {
                          || '|' || precovery_status
                          || '|' || round(nvl(popen_time, -1))
                          || '|' || pblock_size
+                         || '|' || current_scn
+                         || '|' || to_char(sysdate, 'yyyymmddhh24miss')
                   from(
                       select i.instance_name, i.version, i.status, i.logins, i.archiver
                             ,i.startup_time, d.dbid, d.log_mode, d.database_role, d.force_logging
@@ -1445,6 +1447,7 @@ sql_instance () {
                             ,vp.dbid pdbid, vp.open_mode popen_mode, vp.restricted prestricted, vp.total_size ptotal_time
                             ,vp.block_size pblock_size, vp.recovery_status precovery_status
                             ,(cast(systimestamp as date) - cast(open_time as date))  * 24*60*60 popen_time
+                            ,d.current_scn current_scn
                         from v\$instance i
                         join v\$database d on 1=1
                         join v\$parameter p on 1=1
@@ -1456,7 +1459,7 @@ sql_instance () {
                             ,i.startup_time, d.dbid, d.log_mode, d.database_role, d.force_logging
                             ,d.name, d.created, p.value, 0 con_id, null pname
                             ,0 pdbis, null popen_mode, null prestricted, null ptotal_time
-                            ,0 pblock_size, null precovery_status, null popen_time
+                            ,0 pblock_size, null precovery_status, null popen_time, d.current_scn
                         from v\$instance i
                         join v\$database d on 1=1
                         join v\$parameter p on 1=1
@@ -1464,6 +1467,22 @@ sql_instance () {
                         order by con_id
                       );
              "
+    elif [ "$NUMERIC_ORACLE_VERSION" -ge 102 ]; then
+        echo "select upper(i.instance_name)
+                     || '|' || i.VERSION
+                     || '|' || i.STATUS
+                     || '|' || i.LOGINS
+                     || '|' || i.ARCHIVER
+                     || '|' || round((sysdate - i.startup_time) * 24*60*60)
+                     || '|' || DBID
+                     || '|' || LOG_MODE
+                     || '|' || DATABASE_ROLE
+                     || '|' || FORCE_LOGGING
+                     || '|' || d.name
+                     || '|' || to_char(d.created, 'ddmmyyyyhh24mi')
+                     || '|' || d.current_scn
+                     || '|' || to_char(sysdate, 'yyyymmddhh24miss')
+                from v\$instance i, v\$database d;"
     else
         # normal Instance
         echo "select upper(i.instance_name)
