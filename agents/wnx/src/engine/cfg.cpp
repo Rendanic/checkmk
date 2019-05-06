@@ -817,60 +817,67 @@ static std::string GetMapNodeName(const YAML::Node& Node) noexcept {
     }
 }
 
-// #TODO logging, unit testing and simplifying. This is trash!
+constexpr bool IsSmartMerge(std::string_view name) {
+    if (name == groups::kWinPerf) return true;
+
+    return false;
+}
+
+// #TODO simplifying
 bool ConfigInfo::smartMerge(YAML::Node Target, const YAML::Node Src,
                             bool MergeSequences) {
     // we are scanning source
     for (YAML::const_iterator it = Src.begin(); it != Src.end(); ++it) {
-        auto& f = it->first;
-        auto& s = it->second;
-        if (!f.IsDefined()) {
+        auto& source_name = it->first;
+        auto& source_value = it->second;
+        if (!source_name.IsDefined()) {
             XLOG::l.bp(XLOG_FLINE + "  problems here");
             continue;
         }
 
         auto name = it->first.as<std::string>();
-        auto grp = Target[name];
-        if (IsYamlMap(grp)) {
-            if (IsYamlMap(s)) {
-                for (YAML::const_iterator itx = s.begin(); itx != s.end();
-                     ++itx) {
-                    auto merge_seq = name == groups::kWinPerf;
-                    smartMerge(grp, s, merge_seq);
+        XLOG::l("Processing '{}'", name);
+        auto target_value = Target[name];
+        if (IsYamlMap(target_value)) {
+            if (IsYamlMap(source_value)) {
+                for (YAML::const_iterator itx = source_value.begin();
+                     itx != source_value.end(); ++itx) {
+                    auto merge_seq = IsSmartMerge(name);
+                    smartMerge(target_value, source_value, merge_seq);
                 }
             } else {
-                if (s.IsNull()) continue;  // empty skipped
+                if (source_value.IsNull()) continue;  // empty skipped
                 XLOG::l(XLOG_FLINE + " expected map from source {}", name);
             }
             continue;
-        } else if (IsYamlSeq(grp)) {
-            if (IsYamlSeq(s)) {
+        } else if (IsYamlSeq(target_value)) {
+            if (IsYamlSeq(source_value)) {
                 if (MergeSequences) {
                     // special case when we are merging some sequences from
                     // different files
-                    for (auto entry : s) {
+                    for (auto entry : source_value) {
                         auto s_name = GetMapNodeName(entry);
                         if (s_name.empty()) continue;
 
                         bool found = false;
-                        for (auto g_entry : grp) {
-                            auto g_name = GetMapNodeName(g_entry);
-                            if (g_name == s_name) {
+                        for (auto target_entry : target_value) {
+                            auto target_name = GetMapNodeName(target_entry);
+                            if (target_name == s_name) {
                                 found = true;
                                 break;
                             }
                         }
-                        if (!found) grp.push_back(entry);
+                        if (!found) target_value.push_back(entry);
                     }
                 } else
-                    grp = s;
+                    target_value = source_value;
             } else {
                 XLOG::l.bp(XLOG_FLINE + " bad my bad");
             }
             continue;
         } else {
-            if (s.IsDefined())
-                grp = s;
+            if (source_value.IsDefined())
+                target_value = source_value;
             else {
                 XLOG::l.bp(XLOG_FLINE + " bad src");
             }
