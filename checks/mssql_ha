@@ -1,0 +1,148 @@
+#!/usr/bin/python
+# -*- encoding: utf-8; py-indent-offset: 4 -*-
+# +------------------------------------------------------------------+
+# |             ____ _               _        __  __ _  __           |
+# |            / ___| |__   ___  ___| | __   |  \/  | |/ /           |
+# |           | |   | '_ \ / _ \/ __| |/ /   | |\/| | ' /            |
+# |           | |___| | | |  __/ (__|   <    | |  | | . \            |
+# |            \____|_| |_|\___|\___|_|\_\___|_|  |_|_|\_\           |
+# |                                                                  |
+# | Copyright Mathias Kettner 2018             mk@mathias-kettner.de |
+# +------------------------------------------------------------------+
+#
+# This file is part of Check_MK.
+# The official homepage is at http://mathias-kettner.de/check_mk.
+#
+# check_mk is free software;  you can redistribute it and/or modify it
+# under the  terms of the  GNU General Public License  as published by
+# the Free Software Foundation in version 2.  check_mk is  distributed
+# in the hope that it will be useful, but WITHOUT ANY WARRANTY;  with-
+# out even the implied warranty of  MERCHANTABILITY  or  FITNESS FOR A
+# PARTICULAR PURPOSE. See the  GNU General Public License for more de-
+# tails. You should have  received  a copy of the  GNU  General Public
+# License along with GNU Make; see the file  COPYING.  If  not,  write
+# to the Free Software Foundation, Inc., 51 Franklin St,  Fifth Floor,
+# Boston, MA 02110-1301 USA.
+
+# <<<mysql_ha>>>
+# Instance db-name ha-name ha-group synchronized healthy-status
+
+health_states = {
+    "HEALTHY": (0, "healthy"),
+    "PARTIALLY_HEALTHY": (1, "partially healthy"),
+    "NOT_HEALTHY": (2, "not healthy"),
+}
+
+replica_states = {
+    "True": "primary replica",
+    "False": "secondary replica",
+}
+
+sync_states = {
+    "NOT_SYNCHRONIZING": (2, "not synchronizing"),
+    "SYNCHRONIZING": (0, "synchronizing"),
+    "SYNCHRONIZED": (0, "synchronized"),
+    "REVERTING": (1, "reverting"),
+    "INITIALIZING": (1, "initializing"),
+}
+
+
+def discover_mssql_ha(info):
+    for line in info:
+        if len(line) >= 6:
+            yield line[3], None
+
+
+def parse_mssql_ha(info):
+    parsed = {}
+    parsed2 = {}
+
+    for line in info:
+        if len(line) == 7:
+
+            node, db_instance, db_name, ag_name, is_primary_replica, synch_stat, healthy = line
+
+            if is_primary_replica in ('Wahr', '1'):
+                prim_replica = True
+            else:
+                prim_replica = False
+
+            parsed.setdefault((ag_name), {})
+            parsed[ag_name].setdefault(db_name, [])
+
+            parsed[ag_name][db_name].append({
+                "node": node,
+                "instance": db_instance,
+                "is_primary": prim_replica,
+                "sync_state": synch_stat,
+                "healt_state": healthy,
+            })
+
+    return parsed
+
+
+def check_mssql_ha(item, params, info):
+
+    aag_name = item
+
+    parsed = parse_mssql_ha(info)
+
+    try:
+        dbs = parsed[aag_name]
+    except:
+        yield 3, "Data not found in agent output"
+        return
+
+    secondaries = []
+    primary_node = None
+
+    for db_name in sorted(dbs.keys()):
+        for db_data in dbs[db_name]:
+
+            if db_data['is_primary']:
+                primary_node = db_data['node']
+                health_state, health_text = health_states.get(
+                    db_data['healt_state'], (3, 'unknown state %s' % db_data['healt_state']))
+            else:
+                secondaries.append(
+                    [db_data['node'], db_name, db_data['healt_state'], db_data['instance']])
+
+    if primary_node:
+        yield health_state, 'Primary replica on %s state %s' % (primary_node, health_text)
+    else:
+        yield 2, 'no Primary replica found, is primary Node availible?'
+
+    if len(secondaries) == 0:
+
+        yield 2, 'no secondaries found, all Nodes availibe?'
+
+    if len(secondaries) > 10:
+
+        yield 0, 'more then 10 databases found'
+
+    else:
+        # create a dictionary with unique names for secondary nodes
+        second_nodes = {}
+        for second_data in sorted(secondaries, key=lambda x: x[1]):
+            # second_data[3] => instance name
+            second_nodes[second_data[0]] = second_data[3]
+
+        nodestr = ''
+        for node in second_nodes.keys():
+            nodestr += ' %s instance %s' % (node, second_nodes[node])
+
+        yield 0, 'Secondary replicas on%s' % nodestr
+
+        for second_db in secondaries:
+            # todo: sync_state fehlt noch
+            yield 0, 'DB %s' % (second_db[1])
+
+    return
+
+
+check_info["mssql_ha"] = {
+    'check_function': check_mssql_ha,
+    'inventory_function': discover_mssql_ha,
+    'service_description': 'MSSQL AlwaysOn %s',
+    'node_info': True,
+}

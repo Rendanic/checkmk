@@ -103,6 +103,7 @@ sections.add "blocked_sessions", "<<<mssql_blocked_sessions:sep(124)>>>"
 sections.add "backup", "<<<mssql_backup:sep(124)>>>"
 sections.add "transactionlogs", "<<<mssql_transactionlogs:sep(124)>>>"
 sections.add "datafiles", "<<<mssql_datafiles:sep(124)>>>"
+sections.add "highavailability", "<<<mssql_ha>>>"
 sections.add "clusters", "<<<mssql_cluster:sep(124)>>>"
 ' Has been deprecated with 1.4.0i1. Keep this for nicer transition for some versions.
 sections.add "versions", "<<<mssql_versions:sep(124)>>>"
@@ -322,13 +323,69 @@ For Each instance_id In instances.Keys: Do ' Continue trick
         Exit Do
     End If
 
+    Dim prodversion
     ' add detailed information about version and patchrelease
     RS.Open "SELECT SERVERPROPERTY('productversion') as prodversion," & _
             "SERVERPROPERTY ('productlevel') as prodlevel," & _
             "SERVERPROPERTY ('edition') as prodedition", CONN
-    addOutput("MSSQL_" & instance_id & "|details|" & RS("prodversion") & "|" & _
+	prodversion = CInt(Left(RS("prodversion"), 2))
+    addOutput("MSSQL_" & instance_id & "|details|" & prodversion & "|" & _
                RS("prodlevel") & "|" & RS("prodedition"))
     RS.Close
+
+    If prodversion >= 11 Then
+        addOutput(sections("highavailability"))
+
+        ' column is_primary_replica is not availible in MSSQL 2012 => CASE WHEN ...
+        RS.Open "SELECT " &_
+                " ar.replica_server_name," &_
+                " adc.database_name," &_
+                " ag.name AS ag_name," &_
+                " drs.is_local," &_
+                " CASE WHEN hags.primary_replica = ar.replica_server_name THEN 1 ELSE 0 END AS is_primary_replica," &_
+                " drs.synchronization_state_desc," &_
+                " drs.is_commit_participant," &_
+                " drs.synchronization_health_desc," &_
+                " drs.last_sent_time," &_
+                " drs.last_received_time," &_
+                " drs.last_hardened_time," &_
+                " drs.last_redone_time," &_
+                " drs.log_send_queue_size," &_
+                " drs.log_send_rate," &_
+                " drs.redo_queue_size," &_
+                " drs.redo_rate," &_
+                " drs.filestream_send_rate," &_
+                " drs.last_commit_time" &_
+        " FROM sys.dm_hadr_database_replica_states AS drs" &_
+        " INNER JOIN sys.availability_databases_cluster AS adc" &_
+                " ON drs.group_id = adc.group_id AND" &_
+                " drs.group_database_id = adc.group_database_id" &_
+        " INNER JOIN sys.availability_groups AS ag" &_
+                " ON ag.group_id = drs.group_id" &_
+        " INNER JOIN sys.availability_replicas AS ar" &_
+                " ON drs.group_id = ar.group_id AND" &_
+                " drs.replica_id = ar.replica_id" &_
+        " INNER JOIN sys.dm_hadr_availability_group_states AS hags" &_
+                " ON hags.group_id = ag.group_id" &_
+        " WHERE drs.is_local = 1" &_
+        " ORDER BY" &_
+                " ag.name," &_
+                " ar.replica_server_name," &_
+                " adc.database_name;", CONN
+
+        errMsg = checkConnErrors(CONN)
+        If Not errMsg = "" Then
+            addOutput("||" & instance_id & "||" & errMsg)
+        Else
+             Do While NOT RS.EoF
+                 addOutput("MSSQL_" & instance_id & " " & Replace(RS("database_name"), " ", "_") & " " & Replace(RS("ag_name"), " ", "_") & " " & _
+                               RS("is_primary_replica") & " " & Replace(RS("synchronization_state_desc"), " ", "_") & " " & Replace(RS("synchronization_health_desc"), " ", "_"))
+                 RS.MoveNext
+             Loop
+        End If
+
+    RS.Close
+    End If
 
     ' Get counter data for the whole instance
     addOutput(sections("counters"))
