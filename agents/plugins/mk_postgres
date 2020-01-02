@@ -67,7 +67,7 @@ function postgres_connect () {
 #  PGOPTIONS="-c client_min_messages=error"
   PGOPTIONS=""
   EXTRA_ARGS=""
-  su - "$DBUSER" -c "$export_PGPASSFILE $psql ${EXTRA_ARGS} -A -t -q -X -F';'"
+  su - "$DBUSER" -c "$export_PGPASSFILE $psql ${EXTRA_ARGS} -A -q -X -F';'"
 }
 
 #.
