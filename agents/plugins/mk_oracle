@@ -1153,22 +1153,72 @@ sql_recovery_area () {
 sql_undostat () {
     echo 'PROMPT <<<oracle_undostat:sep(124)>>>'
     if [ "$NUMERIC_ORACLE_VERSION" -ge 121 ]; then
-        echo "select decode(vp.con_id, null, upper(i.INSTANCE_NAME)
-                           ,upper(i.INSTANCE_NAME || '.' || vp.name))
-                     ||'|'|| ACTIVEBLKS
-                     ||'|'|| MAXCONCURRENCY
-                     ||'|'|| TUNED_UNDORETENTION
-                     ||'|'|| maxquerylen
-                     ||'|'|| NOSPACEERRCNT
-              from v\$instance i
-              join
-                  (select * from v\$undostat
-                    where TUNED_UNDORETENTION > 0
-                   order by end_time desc
-                   fetch next 1 rows only
-                  ) u on 1=1
-              left outer join v\$pdbs vp on vp.con_id = u.con_id;
-             "
+        echo "
+SET SERVEROUTPUT ON
+SET FEEDBACK OFF
+DECLARE
+    l_cursor_id     INTEGER;
+    l_n_rowcount      NUMBER;
+    l_activeblks   number;
+    l_maxconcurrency   number;
+    l_tuned_undoretention   number;
+    l_maxquerylen   number;
+    l_nospaceerrcnt   number;
+    l_sql    VARCHAR2(2000);
+    l_step   VARCHAR2(20);
+BEGIN
+    dbms_output.enable(200000);
+    l_cursor_id := dbms_sql.open_cursor(security_level => 2);
+    l_step := 'before con';
+    FOR con IN (
+        SELECT
+         upper(DECODE(d.cdb,'NO',i.instance_name
+                           ,i.instance_name || '.' || c.name
+                     )
+              ) iname, c.name
+        FROM
+            v\$containers c,
+            v\$database d,
+            v\$instance i
+        WHERE
+            c.open_mode LIKE 'READ %'
+            AND c.name <> 'PDB\$SEED'
+        ORDER BY c.con_id) LOOP
+        l_step := 'before sql';
+        l_sql := '
+SELECT activeblks,maxconcurrency,tuned_undoretention
+      ,maxquerylen,nospaceerrcnt
+FROM v\$undostat
+WHERE tuned_undoretention > 0
+ORDER BY end_time DESC
+FETCH NEXT 1 ROWS ONLY';
+        l_step := 'parse: ' || con.name;
+        dbms_sql.parse(c => l_cursor_id, statement => l_sql, language_flag => dbms_sql
+        .native, container => con.name);
+        dbms_sql.define_column(l_cursor_id, 1, l_activeblks);
+        dbms_sql.define_column(l_cursor_id, 2, l_maxconcurrency);
+        dbms_sql.define_column(l_cursor_id, 3, l_tuned_undoretention);
+        dbms_sql.define_column(l_cursor_id, 4, l_maxquerylen);
+        dbms_sql.define_column(l_cursor_id, 5, l_nospaceerrcnt);
+        l_step := 'execute: ' || con.name;
+        l_n_rowcount := dbms_sql.execute_and_fetch(l_cursor_id);
+        dbms_sql.column_value(l_cursor_id, 1, l_activeblks);
+        dbms_sql.column_value(l_cursor_id, 2, l_maxconcurrency);
+        dbms_sql.column_value(l_cursor_id, 3, l_tuned_undoretention);
+        dbms_sql.column_value(l_cursor_id, 4, l_maxquerylen);
+        dbms_sql.column_value(l_cursor_id, 5, l_nospaceerrcnt);
+        dbms_output.put_line(con.iname ||'|'||l_activeblks||'|'||l_maxconcurrency
+                            ||'|'||l_tuned_undoretention||'|'||l_maxquerylen||'|'||l_nospaceerrcnt);
+    END LOOP;
+    dbms_sql.close_cursor(l_cursor_id);
+EXCEPTION
+    WHEN OTHERS THEN
+        FOR cur1 in (select upper(i.instance_name) instance_name from  v\$instance i) LOOP
+            dbms_output.put_line(cur1.instance_name || '| Debug: '|| l_step || ': ' || sqlerrm);
+        END LOOP;
+END;
+/
+"
 
     elif [ "$NUMERIC_ORACLE_VERSION" -ge 102 ]; then
         echo "select upper(i.INSTANCE_NAME)
