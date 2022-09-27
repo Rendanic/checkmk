@@ -1126,7 +1126,7 @@ section_omd_core() {
         _sites_cmd() {
             # DO NOT ACCESS /omd/sites/${site}/bin/cmd directly.
             # bin might point anywhere -> priv escalation.
-            printf "/omd/versions/%s/bin/%s" "$(realpath "${1}/version" | sed 's|.*/||')" "${2}"
+            printf "/omd/versions/%s/bin/%s" "$(readlink -f "${1}/version" | sed 's|.*/||')" "${2}"
         }
 
         echo '<<<livestatus_status:sep(59)>>>'
