@@ -11,7 +11,7 @@ jobs:
 
       - name: Checkout new tags to branches
         id: checkout-tags
-        uses: chachako/checkout-tags@v1
+        uses: chachako/checkout-tags@v1.0
         with:
           base: tribe29/checkmk
 
