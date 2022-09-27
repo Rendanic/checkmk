@@ -1,7 +1,7 @@
 name: Sync tags on schedule
 on:
-  schedule:
-    - cron: '00 * * * *'
+  workflow_dispatch:
+
 jobs:
   sync:
     runs-on: ubuntu-latest
