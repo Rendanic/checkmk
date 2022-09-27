@@ -5,7 +5,7 @@ on:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    steps:      
+    steps:
       - name: Checkout head repository
         uses: actions/checkout@v3
 
