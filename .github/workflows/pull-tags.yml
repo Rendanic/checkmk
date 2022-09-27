@@ -1,7 +1,7 @@
 name: Sync tags on schedule
 on:
   schedule:
-    - cron: '32 * * * *'
+    - cron: '*/10 * * * *'
 jobs:
   sync:
     runs-on: ubuntu-latest
